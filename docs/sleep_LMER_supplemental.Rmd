@@ -1,0 +1,3639 @@
+---
+title: "Linear Mixed-effects regression models for exploratory predicting sleep habits in a sample of university students"
+subtitle: "Supplemental materials"
+author: "Luca Menghini"
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    css: styles.css
+---
+
+```{r setup, echo=TRUE,warning=FALSE,message=FALSE}
+
+```
+
+# Aims and content
+
+The following analyses aim to describe the sleep habits of a sample of undergraduate students (N = 82) and to evaluate the role of demographical, dispositional and contextual predictors. Since data are hierarchically structured into two levels (Level 1 = night, Level 2 = student), these goals are pursued using linear mixed-effects regression (LMER) models.
+
+Specifically, the analyses are conducted following a **hierarchical regression** and a **model comparison approach**, where the predictors of interest are subsequently included in more parsimonious models, starting from a null model (with no predictors). Each model is compared to the previous one in terms of data reproducibility (likelihood ratio test, LRT) and plausibility (Aikake Information Criterion, AIC).
+
+The analyses are performed separately for each considered sleep measure: total sleep time (**TST**), sleep efficiency (**SE**), sleep onset latency (**SOL**), wake after sleep onset (**WASO**), bedtime (**BT**), and wake time, (**WT**). The predictors of interest are included in the following order:
+
+- **day of week**: differences between weekdays and weekend are analyzed, hypothesizing shorter TST and earlier BT and WT during the weekend
+
+- **sex**: differences between females and males are analyzed, hypothesizing earlier bedtime and longer TST for females
+
+- **circadian preferences**: higher **MEQ.r** scores are hypothesized to predict earlier bed (BT) and wake time (WT)
+
+- **perceived sleep disturbances**: higher **PSQI** scores hypothesized  to predict lower TST and SE, and longer SOL and WASO
+
+- **depressive symptoms**: higher **BDI** scores are hypothesized to predict more sleep problems, similarly to the above-mentioned hypothesis
+
+- **students' nap frequency**: daily daytime nap as recorded with actigraphy using a set of rules modified from Patel and colleagues (2015)
+
+- **students' habits**: participants reporting to smoke, or to drink coffé and alcohol more frequently are hypothesized to show more sleep problems, similarly to the above-mentioned hypothesis
+
+<br>
+
+# 1. Analytical pipeline
+
+The document is structured as follows:
+
+- the dataset is loaded and converted from a wide form (one row per participant) to a **long form** (one row per night)
+
+- **descriptives** and intraclass correlation coefficients (**ICCs**) are computed for each sleep measure
+
+- a **graphical inspection** is performed for all sleep measures
+
+- the **goodness of fit** is assessed for each sleep measure to check the suitability of the normal and alternative distributions 
+
+- an **influential analysis** is performed to assess the presence of participants influencing the parameters estimation
+
+- **LMER models comparison** is finally performed per each measure and the results of the selected model are discussed
+
+<br>
+
+# 2. Data description
+
+The first step is to load the dataset and to transform it from a wide form (one row per participant) to a **long form** (one row per night) to be used with LMER models.
+
+```{r warning=FALSE,message=FALSE}
+
+rm(list=ls())
+
+library(tidyr); library(textclean); library(dplyr)
+
+# sleep <- read.csv2("Rechecked BT WT all 26.7.19.csv")
+sleep <- read.csv2("Rechecked_nap.csv")
+
+# some numeric variables is erroneously read as factor or character
+sleep[,13:ncol(sleep)] <- lapply(sleep[,13:ncol(sleep)], as.character)
+sleep[,13:ncol(sleep)] <- lapply(sleep[,13:ncol(sleep)], as.numeric)
+sleep$AGE <- as.numeric(as.character(sleep$AGE))
+sleep$CAFFE_week <- as.numeric(as.character(sleep$CAFFE_week))
+sleep$FUMO_Giorno <- as.numeric(as.character(sleep$FUMO_Giorno))
+sleep$ALCOL_week <- as.numeric(as.character(sleep$ALCOL_week))
+
+# from wide to long x each variable
+sleep.long <- gather(data=sleep,day,BT,BT_LUNEDI:BT_DOMENICA)
+sleep.long$WT <- gather(data=sleep,day,WT,WT_LUNEDI:WT_DOMENICA)[,117]
+sleep.long$TIB <- gather(data=sleep,day,TIB,TIB_LUNEDI:TIB_DOMENICA)[,117]
+sleep.long$TST <- gather(data=sleep,day,TST,TST_LUNEDI:TST_DOMENICA)[,117]
+sleep.long$SOL <- gather(data=sleep,day,SOL,SOL_LUNEDI:SOL_DOMENICA)[,117]
+sleep.long$WAKE <- gather(data=sleep,day,WAKE,WAKE_LUNEDI:WAKE_DOMENICA)[,117]
+sleep.long$SE <- as.numeric(gather(data=sleep,day,SE,SE_LUNEDI:SE_DOMENICA)[,117])
+sleep.long$WASO <- gather(data=sleep,day,WASO,WASO_LUNEDI:WASO_DOMENICA)[,117]
+sleep.long$NAP <- gather(data=sleep,day,NAP,NAP_LUNEDI:NAP_DOMENICA)[,117]
+
+# converting categorical predictors as factor
+sleep.long[c("FUMO..SI.NO.","ALCOL..SI.NO.","CAFFE..SI.NO.",
+             "NAP")] <- lapply(sleep.long[c("FUMO..SI.NO.","ALCOL..SI.NO.","CAFFE..SI.NO.",
+                                            "NAP")], factor)
+
+# converting two cases of NAP = 2 into NAP = 1
+summary(sleep.long$NAP)
+sleep.long[sleep.long$NAP==2,"NAP"] <- 1
+sleep.long$NAP <- as.factor(as.character(sleep.long$NAP))
+
+# recoding days
+sleep.long$day <- mgsub(mgsub(sleep.long$day,
+                              c("BT","WT","TIB","TST","SOL","WAKE","SE","WASO","_"),
+                              rep("",9)),
+                        c("LUNEDI","MARTEDI","MERCOLEDI","GIOVEDI","VENERDI","SABATO","DOMENICA"),
+                        c(   1,       2,          3,         4,        5,       6,        7))
+sleep.long$day <- as.factor(sleep.long$day)
+
+# order by ID and day
+sleep.long <- sleep.long[order(sleep.long$ID,sleep.long$day),]
+rownames(sleep.long) <- 1:nrow(sleep.long)
+sleep.long[,c("ID","day","BT","WT","TIB","TST","SE","SOL","WAKE","SE","WASO")]
+# sanity check
+sleep.long[1,"TST"] == sleep[sleep$ID=="EM01","TST_LUNEDI"]
+# sanity check
+sleep.long[sleep.long$ID=="EM04" & sleep.long$day==3,"SE"] == sleep[sleep$ID=="EM04","SE_MERCOLEDI"]
+# sanity check
+sleep.long[sleep.long$ID=="MZ55" & sleep.long$day==5,"WASO"] == sleep[sleep$ID=="MZ55","WASO_VENERDI"]
+
+# take only columns of interest
+sleep.long <- sleep.long[,c("ID","day","BT","WT","TIB","TST","SOL","WAKE","SE","WASO","NAP",
+                            colnames(sleep.long)[c(5:23,30:43)])]
+
+```
+
+<br>
+
+*Comments:*
+
+- the dataset is now in a long form.
+
+<br>
+
+Then, we create the new variable **week.time**, with value "*wd*" for weekdays (Sunday to Thursday) and "*we*" for weekend (Friday to Saturday).
+
+```{r message=FALSE}
+
+sleep.long$week.time <- "wd"
+sleep.long[sleep.long$day==5|sleep.long$day==6,"week.time"] <- "we"
+sleep.long$week.time <- as.factor(sleep.long$week.time)
+sleep.long <- sleep.long[,c("ID","day","week.time",
+                            colnames(sleep.long)[3:(ncol(sleep.long)-1)])]
+# sanity check
+sleep.long[,c("ID","day","week.time")]
+
+```
+
+<br>
+
+Then, we re-codify Wake Time (**WT**, i.e., the hours between midnight and lights on), which is currently referred to the subsequent day (e.g., Friday WT is Saturday WT, Saturday WT is Sunday WT).
+
+```{r message=FALSE}
+
+# adjusting wake time (WT) - expressed as hours from 00:00 --> referred to the subsequent day!
+WT <- sleep.long[,c("ID","day","WT")]
+WT <- WT %>% 
+  group_by(ID) %>% 
+  mutate(WT.lag = dplyr::lead(WT, n = 1))
+# make SUNDAY WT as that previously indicated on SATURDAY
+IDs <- levels(as.factor(WT$ID))
+for(ID in IDs){
+  WT[WT$ID==ID & WT$day==7,"WT.lag"] <- WT[WT$ID==ID & WT$day==1,"WT"] 
+}
+WT # sanity check
+sleep.long$WT.dayAfter <- as.numeric(WT$WT.lag)
+mean(na.omit(sleep.long[sleep.long$week.time=="wd","WT.dayAfter"]))
+mean(na.omit(sleep.long[sleep.long$week.time=="we","WT.dayAfter"]))
+
+```
+
+<br>
+
+Finally, we express TST and TIB in hours, instead of minutes.
+
+```{r }
+
+sleep.long$TST <- sleep.long$TST/60
+sleep.long$TIB <- sleep.long$TIB/60
+
+```
+
+<br>
+
+### 2.1. Data dictionary
+
+Here the meaning of the variables of interest is explained.
+
+```{r }
+
+sleep.long
+
+```
+
+<br>
+
+- **ID** is the identification code of each participant
+
+- **day** is the number of the night where sleep measures are recorded in a given participant. It ranges from 1 (Monday) to 7 (Sunday)
+
+- **week.time** indicates if the considered day is a weekday (wd) or weekend (we)
+
+- **BT** is bedtime, encoded as the number of hours between the previous midnight and the time when participants started sleeping
+
+- **WT** is wake time, encoded as the number of hours between the previous midnight and the time when participants woke up
+
+- **WT.dayAfter** is WT referred to the following day
+
+- **TIB** is total time in bed, encoded as the minutes between BT and WT
+
+- **TST** is total sleep time, encoded as the minutes of effective sleep between BT and WT
+
+- **SE** is sleep efficiency, eexpressed as the percentage of sleep time over TIB (SE = 100*TST/TIB)
+
+- **SOL** is sleep onset latency, encoded as the minutes between BT and the first sleep epoch (sleep onset)
+
+- **WASO** is wake after sleep onset, encoded as the total minutes of wake after sleep onset
+
+- **NAP** indicates if a nap was taken (1) or not (0) by a given participant in a given day 
+
+- **SEX** is participants sex
+
+- **CAFFE_week** is the average number of coffees consumed by a given participant each week
+
+- **FUMO..SI.NO.** indicates if a given participant is a smoker (N = 24, 29%) or not
+
+- **ALCOL_WEEK** is the average number of alcoholic units consumed by a given participant each week
+
+- **MEQ.R** is the MEQ-r score of a given participant, indicating his/her circadian preferences
+
+- **BDI.II** is the BDI-II score of a given participant, indicating his/her depressive symptoms
+
+- **PSQI** is the PSQI score of a given participant, indicating his/her preceived sleep problems
+
+<br>
+
+# 3. Descriptive statistics
+
+<br>
+
+Here, our goal is to describe the variables of interest with a focus on intra-individual variability. Specifically, we compute the intraclass correlation coefficients (**ICCs**) to estimate how the variance is distributed on both the within and the between levels. The ICCs range from 0 (all variance is within participants) to 1 (all variance is between participants).
+
+```{r warning = FALSE,message=FALSE}
+
+library(ICC); library(Rmisc); library(knitr); library(dplyr); library(ggplot2); library(knitr)
+windowsFonts(time=windowsFont("Times New Roman"))
+
+```
+
+<br>
+
+```{r warning=FALSE,message=FALSE}
+
+desc.table <- data.frame(measure=as.character(c("BT","WT.dayAfter","TIB","TST","SE","SOL","WASO")),
+                         mean=rep(NA,7),sd=rep(NA,7),
+                         mean_F=rep(NA,7),sd_F=rep(NA,7),mean_M=rep(NA,7),sd_M=rep(NA,7),
+                         mean_WD=rep(NA,7),sd_WD=rep(NA,7),mean_WE=rep(NA,7),sd_WD=rep(NA,7),ICC=rep(NA,7))
+desc.table$measure <- as.character(desc.table$measure)
+
+for(i in 1:nrow(desc.table)){
+  desc.table[i,2:3] <- round(Rmisc::summarySE(sleep.long, measurevar=desc.table[i,"measure"],
+                                              na.rm=TRUE)[3:4],2)
+  desc.table[i,4:5] <- round(Rmisc::summarySE(sleep.long, measurevar=desc.table[i,"measure"],
+                                              groupvars="SEX",na.rm=TRUE)[1,3:4],2)
+  desc.table[i,6:7] <- round(Rmisc::summarySE(sleep.long, measurevar=desc.table[i,"measure"],
+                                              groupvars="SEX",na.rm=TRUE)[2,3:4],2)
+  desc.table[i,8:9] <- round(Rmisc::summarySE(sleep.long, measurevar=desc.table[i,"measure"],
+                                              groupvars="week.time",na.rm=TRUE)[1,3:4],2)
+  desc.table[i,10:11] <- round(Rmisc::summarySE(sleep.long, measurevar=desc.table[i,"measure"],
+                                              groupvars="week.time",na.rm=TRUE)[2,3:4],2)
+  data4ICC <- sleep.long[,c("ID",desc.table[i,"measure"])]
+  desc.table[i,12] <- round(ICCest(x=ID,y=desc.table[i,"measure"],data=na.omit(data4ICC))$'ICC',2)
+}
+
+kable(desc.table,digits=2, format="pandoc", caption="Table 1: Descriptive Statistics of level-1 variables")
+
+```
+
+<br>
+
+*Comments:*
+
+- descriptive statistics suggest that on average participants fall asleep around 01:00 a.m. and wake up around 8:45 a.m. On average, they spend 7.5 hours in bed, of which only 6.5 hours are effective sleep, with an average sleep efficiency of 86.42%. The average sleep onset latency is 9 minutes and the average wake time after sleep onset is one hour (both measures show high variability between participants).
+
+- descriptively, we observe **no evident differences between weekdays and weekends**, with the exception of TIB and TST.
+
+- all **ICCs** but those of WASO and SE are below .50, indicating that most variability in sleep measures is intra-individual variability, and thus **low sleep consistency** in the sample. The more stable sleep measures are **WASO** and **SE**, whereas the more varying measure, is **TIB**.
+
+<br>
+
+We also create an extended version of this table, showing means and SD by gender and week day.
+
+```{r warning=FALSE,message=FALSE}
+
+desc.table2 <- data.frame(measure=rep(c("BT","WT.dayAfter","TIB","TST","SE","SOL","WASO"),each=2),
+                          sex=rep(c("F","M"),7),
+                          MONmean=rep(NA,14),MONsd=rep(NA,14),TUEmean=rep(NA,14),TUEsd=rep(NA,14),
+                          WEDmean=rep(NA,14),WEDsd=rep(NA,14),THUmean=rep(NA,14),THUsd=rep(NA,14),
+                          FRYmean=rep(NA,14),FRYsd=rep(NA,14),SATmean=rep(NA,14),SATsd=rep(NA,14),
+                          SUNmean=rep(NA,14),SUNsd=rep(NA,14))
+
+for(i in 1:nrow(desc.table2)){
+  stats <- Rmisc::summarySE(sleep.long,measurevar=as.character(desc.table2[i,"measure"]),
+                            groupvars=c("SEX","day"),na.rm=TRUE)
+  desc.table2[i,c("MONmean","MONsd")] <- round(stats[stats$day==1&stats$SEX==desc.table2[i,"sex"],4:5],2)
+  desc.table2[i,c("TUEmean","TUEsd")] <- round(stats[stats$day==2&stats$SEX==desc.table2[i,"sex"],4:5],2)
+  desc.table2[i,c("WEDmean","WEDsd")] <- round(stats[stats$day==3&stats$SEX==desc.table2[i,"sex"],4:5],2)
+  desc.table2[i,c("THUmean","THUsd")] <- round(stats[stats$day==4&stats$SEX==desc.table2[i,"sex"],4:5],2)
+  desc.table2[i,c("FRYmean","FRYsd")] <- round(stats[stats$day==5&stats$SEX==desc.table2[i,"sex"],4:5],2)
+  desc.table2[i,c("SATmean","SATsd")] <- round(stats[stats$day==6&stats$SEX==desc.table2[i,"sex"],4:5],2)
+  desc.table2[i,c("SUNmean","SUNsd")] <- round(stats[stats$day==7&stats$SEX==desc.table2[i,"sex"],4:5],2)
+}
+
+kable(desc.table2,digits=2, format="pandoc", caption="Table 1: Descriptive Statistics by gender and day")
+
+```
+
+<br>
+
+Finally, we can take a look at the variables on level 2 (between-individuals):
+
+```{r warning=FALSE}
+
+gridExtra::grid.arrange(ggplot(sleep,aes(SEX))+geom_bar()+ggtitle("SEX"),
+                        ggplot(sleep,aes(round(AGE,0)))+geom_bar()+ggtitle("AGE"),
+                        ggplot(sleep,aes(FUMO..SI.NO.))+geom_bar()+ggtitle("SMOKE"),
+                        ggplot(sleep,aes(ALCOL..SI.NO.))+geom_bar()+ggtitle("ALCOHOL"))
+
+desc2 <- rbind(
+  sleep[sleep$CAFFE..SI.NO.==1,] %>% 
+  dplyr::select(CAFFE_week) %>%
+  gather("Variable", "value") %>% 
+  group_by(Variable) %>%
+  summarise(Mean=round(mean(value, na.rm=TRUE),2),
+            SD=round(sd(value, na.rm=TRUE),2), 
+            min=round(min(value, na.rm=TRUE), 2),
+            max=round(max(value, na.rm=TRUE),2),
+            N=length(which(!is.na(value)))),
+  sleep[sleep$FUMO..SI.NO.==1,] %>% 
+  dplyr::select(FUMO_Giorno) %>%
+  gather("Variable", "value") %>% 
+  group_by(Variable) %>%
+  summarise(Mean=round(mean(value, na.rm=TRUE),2),
+            SD=round(sd(value, na.rm=TRUE),2), 
+            min=round(min(value, na.rm=TRUE), 2),
+            max=round(max(value, na.rm=TRUE),2),
+            N=length(which(!is.na(value)))),
+  sleep[sleep$ALCOL..SI.NO.==1,] %>% 
+  dplyr::select(ALCOL_week) %>%
+  gather("Variable", "value") %>% 
+  group_by(Variable) %>%
+  summarise(Mean=round(mean(value, na.rm=TRUE),2),
+            SD=round(sd(value, na.rm=TRUE),2), 
+            min=round(min(value, na.rm=TRUE), 2),
+            max=round(max(value, na.rm=TRUE),2),
+            N=length(which(!is.na(value)))),
+  sleep %>% 
+  dplyr::select(c(MEQ.r:PSQI)) %>%
+  gather("Variable", "value") %>% 
+  group_by(Variable) %>%
+  summarise(Mean=round(mean(value, na.rm=TRUE),2),
+            SD=round(sd(value, na.rm=TRUE),2), 
+            min=round(min(value, na.rm=TRUE), 2),
+            max=round(max(value, na.rm=TRUE),2),
+            N=length(which(!is.na(value)))))
+  
+kable(desc2,digits=2, format="pandoc", caption="Table 2: Descriptive Statistics of level-2 variables")
+
+gridExtra::grid.arrange(ggplot(sleep,aes(BDI.II))+geom_bar()+ggtitle("BDI-II"),
+                        ggplot(sleep,aes(round(PSQI,0)))+geom_bar()+ggtitle("PSQI"),
+                        ggplot(sleep,aes(MEQ.r))+geom_bar()+ggtitle("MEQ.r"),nrow=3)
+
+ggplot(sleep,aes(x=PSQI,fill=SEX))+
+  geom_histogram(color="white",position="identity",binwidth = 1)+
+  geom_vline(xintercept=5.5,lty=2,lwd=1)+
+  scale_fill_manual(name="Gender",
+                     values=c("lightgray",rgb(.08, .08, .08,alpha=.5)),
+                     labels=c("Women","Men"))+
+  theme_classic()+labs(x="PSQI scores",y="Frequency")+
+  theme(text=element_text(size=20,face="bold",family="time"))
+
+```
+
+<br>
+
+*Comments:*
+
+- the sample is **gender-balanced**, but it is mainly composed by **non-smokers** (N = 58, 70%) and **alcohol users** (N = 72, 88%).
+
+- the sample is also homogeneous in terms of age, with the exception of **one 35-year-old participant** (could be an influential case!)
+
+- on average, participants consume **12 coffees per week**, with smokers reporting to smoke an average number of **6.5 cigarettes per day** and alcohol users reporting to drink an average number of **4 alcoholic units per week**
+
+- the average **BDI-II** score is 10.22, which is below the suggested cutoff of 13. Only 22 participants (27%) show a score higher than 13.
+
+- the average **MEQ-r** score is 13.23, suggesting that the average participant reports an "intermediate" circadian preference, with 6 (7%) "early birds" (preferring earlier bed and wake time) and 22 (27%) "night owls" (preferring later bed and wake time)
+
+- the average **PSQI** score is 6.06, which is slightly above the suggested cut-off of 5, suggesting the presence of a relatively high number of participants reporting sleep disturbances. Indeed, 44 participants (54%) have a PSQI score higher than 5
+
+<br>
+
+# 4. Graphics
+
+Here, the variables' distributions are further examined by a graphical inspection. A first data is related to sleep consistency and it can be shown in terms of the standard deviation of each considered sleep metric.
+
+```{r  warning=FALSE,message=FALSE}
+
+library(ggplot2); library(extrafont); library(cowplot); library(Rmisc)
+# function for geom_flat_violin
+source("https://gist.githubusercontent.com/benmarwick/2a1bb0133ff568cbe28d/raw/fb53bd97121f7f9ce947837ef1a4c65a73bffb3f/geom_flat_violin.R")
+
+
+# metrics standard deviations
+gridExtra::grid.arrange(ggplot(sleep,aes(x=WT_SD))+
+                          geom_histogram(bins=40) + ggtitle("Wake Time") + xlab("St. Dev") +
+                          theme(text=element_text(family="CMU")),
+                        ggplot(sleep,aes(x=BT_SD))+
+                          geom_histogram(bins=40) + ggtitle("Bed Time") + xlab("St. Dev") +
+                          theme(text=element_text(family="CMU")),
+                        ggplot(sleep,aes(x=TIB_SD))+
+                          geom_histogram(bins=40) + ggtitle("Time in Bed") + xlab("St. Dev")+
+                          theme(text=element_text(family="CMU")),
+                        ggplot(sleep,aes(x=TST_SD))+
+                          geom_histogram(bins=40) + ggtitle("Total Sleep Time") + xlab("St. Dev")+
+                          theme(text=element_text(family="CMU")),
+                        ggplot(sleep,aes(x=SOL_SD))+
+                          geom_histogram(bins=40) + ggtitle("Sleep Onset Time") + xlab("St. Dev")+
+                          theme(text=element_text(family="CMU")),
+                        ggplot(sleep,aes(x=SE_SD))+
+                          geom_histogram(bins=40) + ggtitle("Sleep Efficiency") + xlab("St. Dev")+
+                          theme(text=element_text(family="CMU")),
+                        ggplot(sleep,aes(x=WASO_SD))+
+                          geom_histogram(bins=40) + ggtitle("Wake After Sleep Onset") + 
+                          xlab("St. Dev")+ theme(text=element_text(family="CMU")),nrow=2)
+```
+
+<br>
+
+*Comments:*
+
+- we can observe a degree of variability in each variable, with most cases ranging **between 50 and 70 minutes** for sleep and wake time, time in bed and total sleep time, and **between 10 and 20 minutes** for sleep onset latency and wake after sleep onset.
+
+- the most consistent variable is sleep efficiency, which shows an average SD **around 3%**.
+
+<br>
+
+Then, we can take a look at the day-by-day variability within each participant. Below, each variable is plotted day-by-day for each participant and considering the whole sample.
+
+```{r  warning=FALSE,message=FALSE}
+
+sleep.long$day <- as.numeric(sleep.long$day)
+
+# TIB AND TST by participant
+ggplot(sleep.long,aes(x=day,y=TIB)) +
+  geom_smooth(se=FALSE,span=0.7,colour="black") +
+  geom_point(size=1,colour="black") +
+  geom_smooth(aes(y=TST),colour="#99c2ff",se=FALSE,span=0.7) + # insoddisfatto
+  geom_point(aes(y=TST),size=1,colour="#99c2ff") +
+  geom_vline(aes(xintercept=5.5))+
+  facet_wrap("ID",strip.position="right") +
+  ggtitle("Time in bed (black) and Total Sleep Time (blue)")+ylab("TST (min)")+
+  theme(axis.text = element_text(size=5),text=element_text(family="CMU"))+
+  scale_x_continuous(breaks = c(2,4,6),labels=c("TUE","THU","SAT"))
+
+# TIB AND TST distributions
+ggplot(sleep.long,aes(x=as.factor(as.character(day)),y=TST,fill=as.factor(as.character(day))))+
+  geom_flat_violin(position = position_nudge(x = .2, y = 0),adjust =2,size=1.5)+
+  geom_flat_violin(aes(y=TIB),fill="gray",position = position_nudge(x = .2, y = 0),adjust =2,size=1.5,alpha=.5)+
+  geom_point(aes(col=as.factor(as.character(day))),position = position_jitter(width = .15),size=2)+
+  geom_boxplot(aes(x = as.factor(as.character(day)), y = TST, fill = as.factor(as.character(day))),size=1.5,
+               outlier.shape = NA, alpha = .5, width = .1, colour = "black")+
+  labs(x="",y="TST (min)")+ggtitle("Total Sleep Time and Time in bed (in gray)")+
+  scale_x_discrete(labels=c("MON","TUE","WED","THU","FRY","SAT","SUN"))+
+  theme(text =  element_text(family = "CMU",size=18,face="bold"),legend.position = "none")
+
+# SE by participants
+ggplot(sleep.long,aes(x=day,y=SE)) +
+  geom_smooth(se=FALSE,span=0.7,colour="black") +
+  geom_point(size=1,colour="black") +
+  geom_vline(aes(xintercept=5.5))+
+  facet_wrap("ID",strip.position="right") +
+  ggtitle("Sleep Efficiency")+ylab("SE (%)")+
+  theme(axis.text = element_text(size=5),text=element_text(family="CMU"))+
+  scale_x_continuous(breaks = c(2,4,6),labels=c("TUE","THU","SAT"))
+
+# SE distributions
+ggplot(sleep.long,aes(x=as.factor(as.character(day)),y=SE,fill=as.factor(as.character(day))))+
+  geom_flat_violin(position = position_nudge(x = .2, y = 0),adjust =2,size=1.5)+
+  geom_point(aes(col=as.factor(as.character(day))),position = position_jitter(width = .15),size=2)+
+  geom_boxplot(aes(x = as.factor(as.character(day)), y = SE, fill = as.factor(as.character(day))),size=1.5,
+               outlier.shape = NA, alpha = .5, width = .1, colour = "black")+
+  labs(x="",y="SE (%)")+ggtitle("Sleep Efficiency")+
+  scale_x_discrete(labels=c("MON","TUE","WED","THU","FRY","SAT","SUN"))+
+  theme(text =  element_text(family = "CMU",size=18,face="bold"),legend.position = "none")
+
+# WASO and SOL by participant
+ggplot(sleep.long,aes(x=day,y=WASO)) +
+  geom_smooth(se=FALSE,span=0.7,colour="darkred") +
+  geom_point(size=1,colour="darkred") +
+  geom_smooth(aes(y=SOL),se=FALSE,span=0.7,colour="salmon") +
+  geom_point(aes(y=SOL),size=1,colour="salmon") +
+  geom_vline(aes(xintercept=5.5))+
+  facet_wrap("ID",strip.position="right") +
+  ggtitle("Wake After Sleep Onset (dark red) and Sleep Onset Latency (light red)")+ylab("WASO and SOL (min)")+
+  theme(axis.text = element_text(size=5),text=element_text(family="CMU"))+
+  scale_x_continuous(breaks = c(2,4,6),labels=c("TUE","THU","SAT"))
+  
+# WASO distributions
+ggplot(sleep.long,aes(x=as.factor(as.character(day)),y=WASO,fill=as.factor(as.character(day))))+
+  geom_flat_violin(position = position_nudge(x = .2, y = 0),adjust =2,size=1.5)+
+  geom_point(aes(col=as.factor(as.character(day))),position = position_jitter(width = .15),size=2)+
+  geom_boxplot(aes(x = as.factor(as.character(day)), y = WASO, fill = as.factor(as.character(day))),size=1.5,
+               outlier.shape = NA, alpha = .5, width = .1, colour = "black")+
+  labs(x="",y="WASO (min)")+ggtitle("Wake After Sleep Onset")+
+  scale_x_discrete(labels=c("MON","TUE","WED","THU","FRY","SAT","SUN"))+
+  theme(text =  element_text(family = "CMU",size=18,face="bold"),legend.position = "none")
+
+# SOL distributions
+ggplot(sleep.long[!is.na(sleep.long$SOL)&sleep.long$SOL<100,],aes(x=as.factor(as.character(day)),y=SOL,fill=as.factor(as.character(day))))+
+  geom_flat_violin(position = position_nudge(x = .2, y = 0),adjust =2,size=1.5)+
+  geom_point(aes(col=as.factor(as.character(day))),position = position_jitter(width = .15),size=2)+
+  geom_boxplot(aes(x = as.factor(as.character(day)), y = SOL, fill = as.factor(as.character(day))),size=1.5,
+               outlier.shape = NA, alpha = .5, width = .1, colour = "black")+
+  labs(x="",y="SOL (min)")+ggtitle("Sleep Onset Latency")+
+  scale_x_discrete(labels=c("MON","TUE","WED","THU","FRY","SAT","SUN"))+
+  theme(text =  element_text(family = "CMU",size=18,face="bold"),legend.position = "none")
+
+# WT distributions
+ggplot(sleep.long,aes(x=as.factor(as.character(day)),y=WT,fill=as.factor(as.character(day))))+
+  geom_flat_violin(position = position_nudge(x = .2, y = 0),adjust =2,size=1.5)+
+  geom_point(aes(col=as.factor(as.character(day))),position = position_jitter(width = .15),size=2)+
+  geom_boxplot(aes(x = as.factor(as.character(day)), y = WT, fill = as.factor(as.character(day))),size=1.5,
+               outlier.shape = NA, alpha = .5, width = .1, colour = "black")+
+  labs(x="",y="")+ggtitle("Wake time")+
+  scale_x_discrete(labels=c("MON","TUE","WED","THU","FRY","SAT","SUN"))+
+  scale_y_continuous(breaks=c(4,8,12,16),labels=c("04:00","08:00","12:00","16:00"))+
+  theme(text =  element_text(family = "CMU",size=18,face="bold"),legend.position = "none")
+
+# BT distributions
+ggplot(sleep.long,aes(x=as.factor(as.character(day)),y=BT-24,fill=as.factor(as.character(day))))+
+  geom_flat_violin(position = position_nudge(x = .2, y = 0),adjust =2,size=1.5)+
+  geom_point(aes(col=as.factor(as.character(day))),position = position_jitter(width = .15),size=2)+
+  geom_boxplot(aes(x = as.factor(as.character(day)), y = BT-24, fill = as.factor(as.character(day))),size=1.5,
+               outlier.shape = NA, alpha = .5, width = .1, colour = "black")+
+  labs(x="",y="")+ggtitle("Bed time")+
+  scale_x_discrete(labels=c("MON","TUE","WED","THU","FRY","SAT","SUN"))+
+  scale_y_continuous(breaks=c(0,5,10),labels=c("00:00","05:00","10:00"))+
+  theme(text =  element_text(family = "CMU",size=18,face="bold"),legend.position = "none")
+
+# mean values (WT.dayAfter is wake time on the day after)
+sleep.long$day <- factor(sleep.long$day,levels=c(7,6,5,4,3,2,1))
+means <- summarySE(sleep.long,measurevar="WT.dayAfter",groupvars="day",na.rm=TRUE)
+means$BT <- summarySE(sleep.long,measurevar="BT",groupvars="day",na.rm=TRUE)[,3]
+means$BT.sd <- summarySE(sleep.long,measurevar="BT",groupvars="day",na.rm=TRUE)[,4]
+means$BT.se <- summarySE(sleep.long,measurevar="BT",groupvars="day",na.rm=TRUE)[,5]
+means <- means[order(means$day,decreasing=TRUE),]
+
+# plotting BT and following WT
+ggplot(sleep.long,aes(x=day,y=BT-24))+
+  geom_flat_violin(adjust =2,size=0,alpha=.5,fill="gray")+
+  geom_flat_violin(aes(y=WT.dayAfter),
+                   adjust =2,size=0,alpha=.5,fill="gray")+
+  geom_segment(data=means,aes(x=day,xend=day,
+                              y=WT.dayAfter,yend=BT-24),size=2,colour="black")+
+  geom_point(data=means,aes(x=day,y=WT.dayAfter),size=6,shape=21,fill="gray")+
+  geom_point(data=means,aes(x=day,y=BT-24),size=6,shape=22,fill="gray")+
+  labs(x="",y="")+
+  scale_x_discrete(labels=c("SUN","SAT","FRY","THU","WED","TUE","MON"))+
+  scale_y_continuous(breaks=c(0,1.5,3,4.5,6,7.5,9,10.5),limits=c(-1,11),
+                     labels=c("00:00","01:30","03:00","04:30","06:00","07:30","09:00","10:30"))+
+  theme_blank()+
+  theme(text =  element_text(family = "time",face="bold",size=16),legend.position = "top")+
+  coord_flip()
+
+```
+
+<br>
+
+*Comments:*
+
+- We observe **no clear differences between weekdays and weekend** for TIB, TST, SE, WASO, and SOL.
+
+- In contrast, slightly higher WT and BT values are showed on **Saturday** compared to other days, suggesting that participants fall asleep later and wake up later on Saturday.
+
+- We can notice one outlier (**EM39**) for WT on day 4 (Thursday).
+
+- The latter graph suggest that both Wednesday and Saturday show slightly higher variability compared to other days.
+
+<br>
+
+# 5. Goodness of fit {.tabset .tabset-fade .tabset-pills}
+
+In this section, we assess the goodness of fit (GOF) of each model specified in the "LMER MODELS" section. Specifically, we focus on the most complex model speciefied per each sleep measure, and we evaluate (A) the normality of resuduals distribution, (B) the normality of random effects distribution, and (C) the independence of residuals from fitted values (homoscedasticity).
+
+```{r  warning=FALSE,message=FALSE}
+
+library(lme4); library(jtools); library(effects) # modeling
+library(fitdistrplus) ; library(car) ; library(lattice) # gof
+
+```
+
+<br>
+
+## PIPELINE
+
+For each sleep metric, we assess the GOF of the most complex model (including all predictors of interest) and we assess the following LMER models' assumptions: 
+
+- independence between residuals and fitted values,
+
+- the normality of both residuals' and random effects' distribution,
+
+- that random effects are centered on zero,
+
+<br>
+
+## TIB
+
+<br>
+
+Typically, TST shows a symmetrical shape that can be modeled with a normal distribution (as shown in the GRAPHICS section).
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long)
+# residuals normal fit (good)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+# random effects normal fit (good)
+plot(fitdist(ranef(m)$'ID'[[1]],distr="norm",method="mle"))
+# LMER assumptions (good)
+gridExtra::grid.arrange(plot(m,main="Resid vs Fitted"),
+                        qqmath(residuals(m),main="Residual QQPlot"),
+                        dotplot(ranef(m))[[1]],
+                        plot(ranef(m),main="Random Effects QQplot")[[1]],
+                        nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- The normal distribution shows a good fit on TIB's residuals and random effects.
+
+- All other LMER assumptions seem to be fulfilled.
+
+<br>
+
+*Conclusions:*
+
+We can model TIB under the normality assumption.
+
+<br>
+
+## TST
+
+<br>
+
+Like TIB, TST typically shows a symmetrical shape that can be modeled with a normal distribution (as shown in the GRAPHICS section).
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(TST~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long)
+# residuals normal fit (good)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+# random effects normal fit (good)
+plot(fitdist(ranef(m)$'ID'[[1]],distr="norm",method="mle"))
+# LMER assumptions (good)
+gridExtra::grid.arrange(plot(m,main="Resid vs Fitted"),
+                        qqmath(residuals(m),main="Residual QQPlot"),
+                        dotplot(ranef(m))[[1]],
+                        plot(ranef(m),main="Random Effects QQplot")[[1]],
+                        nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- The normal distribution shows an excellent fit on TST's residuals and a good fit on random effects.
+
+- All other LMER assumptions seem to be fulfilled.
+
+<br>
+
+*Conclusions:*
+
+We can model TST under the normality assumption.
+
+<br>
+
+## SE
+
+<br>
+
+SE is bounded between 0 (when TST = 0) and 100 (when TST = TIB). Thus, a beta regression could be the best option, but at the time of these analyses no packages able to deal with mixed-effects beta regression were available (to our knowledge).
+
+In our sample, only 4 on 82 showed an SE lower than 70%: **EM07** (night 5), **EM22** (night 36), **EM36** (night 7) and **EM53** (all 7 nights), whereas only one participant showed an SE = 99% and no participants showed a 100% SE.
+
+```{r  warning=FALSE,message=FALSE}
+
+# SE < 70%
+sleep.long[!is.na(sleep.long$SE)&sleep.long$SE<70,
+           c("ID","day","SE","TIB","TST","WASO","SOL")]
+mean(sleep.long[sleep.long$ID=="MZ53","SE"])
+mean(sleep.long[sleep.long$ID=="MZ53","WASO"])
+
+# SE = 99%
+sleep.long[!is.na(sleep.long$SE)&sleep.long$SE==99,
+           c("ID","day","SE","TIB","TST","WASO","SOL")]
+
+```
+
+<br>
+
+The frequency distribution shows a quite normal shape, which is symmetric and centered approximately on 87-88%. The issue of modeling these data using a normal distribution is that the models would predict values above 100%, whereas TST cannot be higher than TIB (thus, SE cannot be higher than 100%).
+
+```{r  warning=FALSE,message=FALSE}
+
+hist(sleep.long$SE,breaks=100)
+
+```
+
+<br>
+
+With no clues on how to model the data differently, we accept this limitation and we proceed by evaluating the fit of the normal distribution. Indeed, SE can be seen as a sort of transformation of TST, which can be reasonably modeled assuming residuals normality. SE results should confirm those obtained on TST, and we could focus our goal on assessing the impact of our predictors of interest on SE, instead of predicting meaningful SE values.
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(SE~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long)
+# residuals normal fit (acceptable)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+# random effects normal fit (acceptable)
+plot(fitdist(ranef(m)$'ID'[[1]],distr="norm",method="mle"))
+# LMER assumptions (acceptable)
+gridExtra::grid.arrange(plot(m,main="Resid vs Fitted"),
+                        qqmath(residuals(m),main="Residual QQPlot"),
+                        dotplot(ranef(m))[[1]],
+                        plot(ranef(m),main="Random Effects QQplot")[[1]],
+                        nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- The normal distribution does not show a very good fit on SE's residuals or random effects. This is especially due to the four outliers (**EM07**, **EM22**, **EM36** and **MZ53**) showing SE lower than 70% (2+ hours of WASO, 2 to 5 hours of TST).
+
+- All other LMER assumptions seem to be fulfilled (residuals are independent of fitted values, and random effects are normally distributed and centered on zero).
+
+<br>
+
+Let's see what happens to residuals normality if we exclude the two outliers:
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(SE~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),
+          sleep.long[sleep.long$ID!="EM07"&sleep.long$ID!="EM22"&sleep.long$ID!="EM36"&sleep.long$ID!="MZ53",]) # excluding outliers
+# residuals normal fit (acceptable)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+
+```
+
+<br>
+
+*Comments:*
+
+- the normal fit is much better without participants with SE <70%, and especially without **EM07** and **MZ53** (SE < 60%).
+
+<br>
+
+We can also try to log-transform the data considering the whole sample.
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(log(SE)~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data=sleep.long)
+# residuals normal fit (worse)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+
+```
+
+<br>
+
+*Comments:*
+
+- if we do not exclude the outliers, the log-transformation does not improve the fit of the normal distribution.
+
+<br>
+
+*Conclusions:*
+
+Predicting SE scores assuming a normal residuals distribution implies that SE could be above 100% or (with much less probability) below 0%, which cannot be the case. However, with no clues on alternative ways to model our data, the normal distribution seems to be the better way. Looking at the data, we evaluate the normal fit on SE residuals as not excellent but at least acceptable. Removing four outliers would improve the fit.
+
+<br>
+
+## SOL
+
+<br>
+
+SOL is a variable bounded on zero, typically skewed on the right, with few cases showing more than 1 hour of latency. Thus, we can try to log transform it to fit a model under normality, or we might use the Gamma family, which is bounded on zero.
+
+```{r  warning=FALSE,message=FALSE}
+
+# normal fit on log-transformed SOL (a constant is added to avoid cases of log(0))
+m <- lmer(log(SOL+.05)~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long)
+# residuals normal fit (acceptable?)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+# random effects normal fit (good)
+plot(fitdist(ranef(m)$'ID'[[1]],distr="norm",method="mle"))
+# LMER assumptions (acceptable)
+gridExtra::grid.arrange(plot(m,main="Res. vs Fitted"),
+                        qqmath(residuals(m),main="Residual QQPlot"),
+                        dotplot(ranef(m))[[1]],
+                        plot(ranef(m),main="Random Effects QQplot")[[1]],
+                        nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- the fit of the normal distribution is not very good but acceptable
+
+- all other LMER assumptions seem to be fulfilled (residuals are independent of fitted values, and random effects are normally distributed and centered on zero)
+
+<br>
+
+Then, we check the fit of the Gamma family.
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- glmer(SOL+.05~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long,
+           family="Gamma")
+plot(fitdist(resid(m),distr="norm",method="mle"))
+
+```
+
+<br>
+
+*Conclusions:*
+
+The fit of the Gamma family on raw SOL data is worse than that of the normal distribution on log-transformed data. The best option seems to log-transform.
+
+<br>
+
+## WASO
+
+<br>
+
+As TST, WASO usually shows a symmetrical shape that can be modeled with a normal distribution (as shown in the GRAPHICS section).
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(WASO~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long)
+# residuals normal fit (good)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+# random effects normal fit (good)
+plot(fitdist(ranef(m)$'ID'[[1]],distr="norm",method="mle"))
+# LMER assumptions (good)
+gridExtra::grid.arrange(plot(m,main="Resid vs Fitted"),
+                        qqmath(residuals(m),main="Residual QQPlot"),
+                        dotplot(ranef(m))[[1]],
+                        plot(ranef(m),main="Random Effects QQplot")[[1]],
+                        nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- the normal distribution shows a good fit on WASO's residuals and a good fit on random effects
+
+- all other LMER assumptions seem to be fulfilled
+
+<br>
+
+*Conclusions:*
+
+We can model WASO under the normality assumption.
+
+<br>
+
+## BT
+
+<br>
+
+We expect to observe a symmetric shape also for BT.
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(BT~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long)
+# residuals normal fit (acceptable)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+# random effects normal fit (good)
+plot(fitdist(ranef(m)$'ID'[[1]],distr="norm",method="mle"))
+# LMER assumptions (good)
+gridExtra::grid.arrange(plot(m,main="Resid vs Fitted"),
+                        qqmath(residuals(m),main="Residual QQPlot"),
+                        dotplot(ranef(m))[[1]],
+                        plot(ranef(m),main="Random Effects QQplot")[[1]],
+                        nrow=2)
+
+# outliers
+sleep.long[!is.na(sleep.long$BT)&sleep.long$BT>30,c("ID","day","BT","WT")]
+
+```
+
+<br>
+
+*Comments:*
+
+- the fit of the normal distribution is not very good but acceptable
+
+- we can observe some outliers (especially **EM22** and **MZ36**) showed BT higher than 34
+
+- all other LMER assumptions seem to be fulfilled (residuals are independent of fitted values, and random effects are normally distributed and centered on zero)
+
+<br>
+
+Let's see what happens if we exclude the two outliers:
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(BT~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),
+          sleep.long[sleep.long$ID!="EM22"&sleep.long$ID!="MZ36",]) # excluding outliers
+# residuals normal fit (slighlty better)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+
+```
+
+<br>
+
+*Comments:*
+
+- the normal fit is slighlty better without participants **EM22** and **MZ36**.
+
+<br>
+
+Also a log transformation slighlty improves the normal fit, but the improvement is not substantial.
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(log(BT)~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long)
+# residuals normal fit (slighlty better)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+
+```
+
+<br>
+
+*Conclusions:*
+
+The normal fit on BT is not excellent but at least acceptable, removing two outliers seems to improve the fit. There is no evident reason to log transform the data.
+
+<br>
+
+## WT
+
+We expect to observe a symmetric shape also for WT.
+
+```{r  warning=FALSE,message=FALSE}
+
+m <- lmer(WT~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long)
+# residuals normal fit (good)
+plot(fitdist(resid(m),distr="norm",method="mle"))
+# random effects normal fit (good)
+plot(fitdist(ranef(m)$'ID'[[1]],distr="norm",method="mle"))
+# LMER assumptions (good)
+gridExtra::grid.arrange(plot(m,main="Resid vs Fitted"),
+                        qqmath(residuals(m),main="Residual QQPlot"),
+                        dotplot(ranef(m))[[1]],
+                        plot(ranef(m),main="Random Effects QQplot")[[1]],
+                        nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- the normal distribution fits well both residuals and random effects for WT
+
+- all other LMER assumptions seem to be fulfilled (residuals are independent of fitted values, and random effects are centered on zero)
+
+<br>
+
+*Conclusions:*
+
+We can model WT under the normality assumption.
+
+<br>
+
+# 6. Influential analysis {.tabset .tabset-fade .tabset-pills}
+
+Influential cases are cases that strongly determine the size of the parameters estimated by a model, negatively influencing the statistical fit and generalizability of the model. Influential analysis is based on the principle that the iterative exclusion of single cases from the data considered by a target model should not produce substantially different parameters estimates (Nieuwenhuis, Te Grotenhuis & Pelzer, 2012).
+
+In this section, we perform an influential analysis by using the **Cook's distance** (CD), which indicates, for each observation *i*, the distance between the parameters vector of the model M and that of M-i. High CD values indicate that the observation has a strong influence on the parameters estimated by the model. A cut-off of 4/N is used to identify the most influential cases based on the CD.
+
+<br>
+
+## PIPELINE
+
+For each sleep measure, we use the most complex model (with all predictors of interest) to proceed as follows:
+
+- we compute the Cook's distance by considering a cut-off set to 4/N,
+
+- we re-estimate the parameters by removing all potentially influent cases identified with the CD, one-by-one,
+
+- if a given case shows to substantially influence the parameters estimation, we replicate the influential analysis without that case,
+
+- finally, we decide which cases can be removed.
+
+<br>
+
+## TIB
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+# taking only ID and variables of interest (only continuous), specifying the model
+data2check <- sleep.long[!is.na(sleep.long$TIB)&!is.na(sleep.long$week.time)&!is.na(sleep.long$SEX)&
+                           !is.na(sleep.long$MEQ.r)&!is.na(sleep.long$PSQI)&!is.na(sleep.long$BDI.II)&
+                           !is.na(sleep.long$ALCOL_week)&!is.na(sleep.long$FUMO..SI.NO.)&
+                           !is.na(sleep.long$CAFFE_week),
+                         c("ID","day","TIB","week.time","SEX","MEQ.r","PSQI","BDI.II","NAP",
+                            "ALCOL_week","FUMO..SI.NO.","CAFFE_week")]
+m <- lmer(TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data2check)
+
+# computing Cook's dinstance and cutoff
+cd <- cooks.distance(m)
+data2check$cd <- cd
+cutoff <- 4/length(levels(data2check$ID)) # 4/N
+
+# selecting influential cases
+index <- c(1:nrow(data2check)) # nrow
+pm=cbind(data2check,cd,index)
+pm=pm[order(pm$cd,decreasing = TRUE),] # order
+pm$infl <- NA
+for(i in 1:nrow(pm)){
+  if(pm[i,"cd"] >= cutoff){ pm[i,"infl"] <- 1 } else { pm[i,"infl"] <- 0 }
+}
+PM <- pm
+
+# Plotting Cook's distance
+par(mfrow=c(1,1),mar=c(6, 5, 4, 2) + 0.1)
+plot(cd, xlab="Index",ylab="Cook's distance",
+     main=paste("Cook's Distance \ncut-off: 4/N =",round(cutoff,3),
+                " ( NInfl =",nrow(pm[pm$infl==1,]),")"),
+     pch=20,cex.lab=1.6,cex.axis=1.4,col.main="blue")
+points(pm[pm$cd>=cutoff,"index"],
+       pm[pm$cd>=cutoff,"cd"],pch=20,cex=1.3,col="red")
+text(pm[pm$cd>=cutoff,"index"]-10,
+     pm[pm$cd>=cutoff,"cd"]-0.005,
+     paste(pm[pm$cd>=cutoff,"ID"],pm[pm$cd>=cutoff,"day"]),cex=.8)
+abline(h=cutoff,
+       lwd=1.8,col="blue",lty=2)
+
+# participants showing cases above the cutoff
+levels(as.factor(as.character(pm[pm$cd>cutoff,"ID"])))
+
+```
+
+<br>
+
+*Comments:*
+
+- 21 observations (i.e., combination of participant and day) due to 14 participants are more extreme than others and show a CD above the cutoff.
+
+- observations from **MZ56** shows the highest Cook's distance
+
+<br>
+
+In the next step, we re-estimate the parameters by excluding each potentially influential participant, one-by-one. We focus on substantial changes in the estimated parameters, such that the excluded cases implies a drastic change in the interpretation of the effects.
+
+```{r  warning=FALSE,message=FALSE}
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(PM[PM$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- PM[PM$ID!=ID,]
+  m4 <- lmer(TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+# week.time (the code for the remaining parameters is not showed)
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOHOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est<=(-1.6),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est<=(-1.6),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- Larger differences are shown by the parameters estimated for **week.time** (ranging from .20 to .28, with t-values ranging from 1.7 to 2.3) and **Gender** (ranging from -.39 to -.32, with t-values ranging from -.2.2 to -1.8). 
+
+- The most influential participants are **EM42** (whose exclusion leads to a decrease of .04 in the parameter estimated for week.time, whose t-value decreases from 2.0 to 1.7), and **MZ56** (whose exclusion leads to a decrease of .03 in the parameter estimated for Gender, whose t-value increases in absolute value from 1.95 to 2.2)
+
+- None of the the other parameters seems to substantially change the interpretation of the results (i.e., non-significant effects remain non-significant, positive effects remain positive and negative effects remain negative).
+
+<br>
+
+Thus, we replicate the influential analysis by removing **EM42** and **MZ56** We start with the latter, which shows the highest Cook's distance.
+
+```{r  warning=FALSE,message=FALSE}
+
+OUT <- data2check[data2check$ID!="MZ56",] # excluding influential case
+m <- lmer(TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),OUT)
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(OUT[OUT$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- OUT[OUT$ID!=ID,]
+  m4 <- lmer(TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+```
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+
+# week.time
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOHOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est<=(-1.6),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est<=(-1.6),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+**Comments:*
+
+- the exclusion of **MZ56** increases the effect of **Gender**, which becomes more consistent across the sample.
+
+- the role of **week.time** is still inconsistent, with participant **EM42** showing the strongest influence (leading to an increase of .04 in the estimated parameter, with t-value increasing from 1.5 to 1.9).
+
+- none of the other parameters shows to be substantially influenced by the exclusion of MZ56.
+
+<br>
+
+Thus, we replicate the influential analysis by removing **EM42**
+
+```{r  warning=FALSE,message=FALSE}
+
+OUT <- OUT[OUT$ID!="EM42",] # excluding influential case
+m <- lmer(TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),OUT)
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(OUT[OUT$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- OUT[OUT$ID!=ID,]
+  m4 <- lmer(TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+```
+
+```{r  echo=FALSE, warning=FALSE,message=FALSE}
+
+# week.time
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOHOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est<=(-1.6),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est<=(-1.6),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- the exclusion of **EM42** decreases the effect of **Week time**, which becomes more consistent across the sample.
+
+- none of the other parameters shows to be substantially influenced by the exclusion of EM42 (i.e., non-significant effects remain non-significant, positive effects remain positive and negative effects remain negative).
+
+<br>
+
+*Conclusions:*
+
+We decide to perform the analyses on TIB without **MZ56** and **EM42**.
+
+<br>
+
+## TST
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+# taking only ID and variables of interest (only continuous), specifying the model
+data2check <- sleep.long[!is.na(sleep.long$TST)&!is.na(sleep.long$week.time)&!is.na(sleep.long$SEX)&
+                           !is.na(sleep.long$MEQ.r)&!is.na(sleep.long$PSQI)&!is.na(sleep.long$BDI.II)&
+                           !is.na(sleep.long$ALCOL_week)&!is.na(sleep.long$FUMO..SI.NO.)&
+                           !is.na(sleep.long$CAFFE_week),
+                         c("ID","day","TST","week.time","SEX","MEQ.r","PSQI","BDI.II","NAP",
+                            "ALCOL_week","FUMO..SI.NO.","CAFFE_week")]
+m <- lmer(TST~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data2check)
+
+# computing Cook's dinstance and cutoff
+cd <- cooks.distance(m)
+data2check$cd <- cd
+cutoff <- 4/length(levels(data2check$ID)) # 4/N
+
+# selecting influential cases
+index <- c(1:nrow(data2check)) # nrow
+pm=cbind(data2check,cd,index)
+pm=pm[order(pm$cd,decreasing = TRUE),] # order
+pm$infl <- NA
+for(i in 1:nrow(pm)){
+  if(pm[i,"cd"] >= cutoff){ pm[i,"infl"] <- 1 } else { pm[i,"infl"] <- 0 }
+}
+PM <- pm
+
+# Plotting Cook's distance
+par(mfrow=c(1,1),mar=c(6, 5, 4, 2) + 0.1)
+plot(cd, xlab="Index",ylab="Cook's distance",
+     main=paste("Cook's Distance \ncut-off: 4/N =",round(cutoff,3),
+                " ( NInfl =",nrow(pm[pm$infl==1,]),")"),
+     pch=20,cex.lab=1.6,cex.axis=1.4,col.main="blue")
+points(pm[pm$cd>=cutoff,"index"],
+       pm[pm$cd>=cutoff,"cd"],pch=20,cex=1.3,col="red")
+text(pm[pm$cd>=cutoff,"index"]-10,
+     pm[pm$cd>=cutoff,"cd"]-0.005,
+     paste(pm[pm$cd>=cutoff,"ID"],pm[pm$cd>=cutoff,"day"]),cex=.8)
+abline(h=cutoff,
+       lwd=1.8,col="blue",lty=2)
+
+# participants showing cases above the cutoff
+levels(as.factor(as.character(pm[pm$cd>cutoff,"ID"])))
+
+```
+
+<br>
+
+*Comments:*
+
+- 30 observations (i.e., combination of participant and day) due to 21 participants are more extreme than others and show a CD above the cutoff
+
+<br>
+
+In the next step, we re-estimate the parameters by excluding each potentially influential participant, one-by-one. We focus on substantial changes in the estimated parameters, such that the excluded cases implies a drastic change in the interpretation of the effects.
+
+```{r  warning=FALSE,message=FALSE}
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(PM[PM$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- PM[PM$ID!=ID,]
+  m4 <- lmer(TST~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+# week.time (the code for the remaining parameters is not showed)
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+```{r  echo=FALSE,warning=FALSE,message=FALSE}
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOHOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est<=(-1.6),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est<=(-1.6),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- Larger differences are shown by the parameters estimated for **week.time** (ranging from 12 to 16, with t-values ranging from 2.0 to 2.4), **MEQ-R** (ranging from -1.25 to 0.00, with t-values ranging from -1.00 to 0.00, and **MZ44** and **MZ56** leading to an average decrease of .4 in the estimated parameter), **ALCOHOL** (ranging from -1.6 to -.2, with t-values ranging from -1.0 to 0.0, and **MZ44** leading to an absolute increase of .75 in the estimated parameter), **SMOKE** (ranging from -15 to -8, with t-values ranging from -1.4 to -.8, and **EM06**, **EM22** and **EM36** leading to an average absolute increase of .2 in the estimated parameter).
+
+- **EM22** and **EM36** are among the most influential cases. Interestingly, they are also two of the four outliers found for SE.
+
+- None of the potentially influential cases seems to substantially change the interpretation of the results (i.e., non-significant effects remain non-significant, positive effects remain positive and negative effects remain negative). 
+
+<br>
+
+*Conclusions:*
+
+We decide to keep all participants in TST analyses.
+
+<br>
+
+## SE
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+# taking only ID and variables of interest (only continuous), specifying the model
+data2check <- sleep.long[!is.na(sleep.long$SE)&!is.na(sleep.long$week.time)&!is.na(sleep.long$SEX)&
+                           !is.na(sleep.long$MEQ.r)&!is.na(sleep.long$PSQI)&!is.na(sleep.long$BDI.II)&
+                           !is.na(sleep.long$ALCOL_week)&!is.na(sleep.long$FUMO..SI.NO.)&
+                           !is.na(sleep.long$CAFFE_week),
+                         c("ID","day","SE","week.time","SEX","MEQ.r","PSQI","BDI.II","NAP",
+                            "ALCOL_week","FUMO..SI.NO.","CAFFE_week")]
+m <- lmer(SE~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data2check)
+
+# computing Cook's dinstance and cutoff
+cd <- cooks.distance(m)
+data2check$cd <- cd
+cutoff <- 4/length(levels(data2check$ID)) # 4/N
+
+# selecting influential cases
+index <- c(1:nrow(data2check)) # nrow
+pm=cbind(data2check,cd,index)
+pm=pm[order(pm$cd,decreasing = TRUE),] # order
+pm$infl <- NA
+for(i in 1:nrow(pm)){
+  if(pm[i,"cd"] >= cutoff){ pm[i,"infl"] <- 1 } else { pm[i,"infl"] <- 0 }
+}
+PM <- pm
+
+# Plotting mahalanobis distance
+par(mfrow=c(1,1),mar=c(6, 5, 4, 2) + 0.1)
+plot(cd, xlab="Index",ylab="Cook's distance",
+     main=paste("Cook's Distance \ncut-off: 4/N =",round(cutoff,3),
+                " ( NInfl =",nrow(pm[pm$infl==1,]),")"),
+     pch=20,cex.lab=1.6,cex.axis=1.4,col.main="blue")
+points(pm[pm$cd>=cutoff,"index"],
+       pm[pm$cd>=cutoff,"cd"],pch=20,cex=1.3,col="red")
+text(pm[pm$cd>=cutoff,"index"]-10,
+     pm[pm$cd>=cutoff,"cd"]-0.005,
+     paste(pm[pm$cd>=cutoff,"ID"],pm[pm$cd>=cutoff,"day"]),cex=.8)
+abline(h=cutoff,
+       lwd=1.8,col="blue",lty=2)
+
+# participants showing cases above the cutoff
+levels(as.factor(as.character(pm[pm$cd>cutoff,"ID"])))
+
+```
+
+<br>
+
+*Comments:*
+
+- 39 observations (i.e., combination of participant and day) due to 26 participants are more extreme than others and show a CD above the cutoff
+
+<br>
+
+In the next step, we re-estimate the parameters by excluding each potentially influential participant, one-by-one. We focus on substantial changes in the estimated parameters, such that the excluded cases implies a drastic change in the interpretation of the effects.
+
+```{r  warning=FALSE,message=FALSE}
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(data2check[data2check$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- data2check[data2check$ID!=ID,]
+  m4 <- lmer(SE~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+# week.time (the code for the remaining parameters is not showed)
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & (parameters$est<=.1|parameters$est>=.3),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & (parameters$est<=.1|parameters$est>=.3),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+```{r  echo=FALSE,warning=FALSE,message=FALSE}
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est>=(-1.5),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est>=(-1.5),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & parameters$est>=(-.05),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & parameters$est>=(-.05),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & (parameters$est<=(-.04)|parameters$est>=.03),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & (parameters$est<=(-.04)|parameters$est>=.03),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & (parameters$est<=(-.06)|parameters$est>=(-.04)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & (parameters$est<=(-.06)|parameters$est>=(-.04)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="NAP" & (parameters$est<=(-1)|parameters$est>=(-.7)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="NAP" & (parameters$est<=(-1)|parameters$est>=(-.7)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOHOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(.05)|parameters$est>=(.175)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(.05)|parameters$est>=(.175)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & (parameters$est<=(-3)|parameters$est>=(-1.5)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & (parameters$est<=(-3)|parameters$est>=(-1.5)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- Larger differences are shown by the parameter estimated for **NAP** (ranging from -.6 to -1.1, with t-values ranging from -1.6 to -2.3, and EM07 showing the strongest influence, leading to an increase of .4 in the estimated NAP coefficient). Further differences are shown by the parameters estimated for **sex** (ranging from -2.0 to -1.0, with t-values ranging from -1.6 to -1.0, and **MZ53** leading to an absolute increase of .75 in the estimated parameter), and **smoke** (ranging from -3 to -1.5, with t-values ranging from -2.5 to -1.5, and **MZ53** leading to an absolute increase of 1.0 in the estimated parameter).
+
+- **MZ53** shows a degree of influence on almost all parameters, although the interpretation of the results does not change substantially (i.e., non-significant effects remain non-significant, positive effects remain positive and negative effects remain negative). The only exception is **smoke**, whose effect seems to strongly depend on **MZ53**.
+
+- **MZ53** is also one of the four outliers found for SE, with all nights showing an SE < .70.
+
+<br>
+
+Thus, we replicate the influential analysis by removing **EM07** and **MZ53**. We start with the former.
+
+```{r  warning=FALSE,message=FALSE}
+
+OUT <- data2check[data2check$ID!="EM07",] # excluding influential case
+m <- lmer(SE~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),OUT)
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(OUT[OUT$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- OUT[OUT$ID!=ID,]
+  m4 <- lmer(SE~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+```
+
+<br>
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+
+# week.time
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- The exclusion of **EM07** decreases the effect of **NAP** and makes the estimated parameter more consistent. 
+
+- Participant **MZ53** continues to show a degree of influence on many parameters, and particularly on **smoke**.
+
+<br>
+
+Thus, we replicate the influential analysis by removing **MZ53**.
+
+```{r  warning=FALSE,message=FALSE}
+
+OUT <- OUT[OUT$ID!="MZ53",] # excluding influential case
+m <- lmer(SE~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),OUT)
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(OUT[OUT$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- OUT[OUT$ID!=ID,]
+  m4 <- lmer(SE~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+
+# week.time
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & parameters$est>=.3,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & parameters$est>=.3,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est>=(-.7),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est>=(-.7),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & (parameters$est<=(-.06)|parameters$est>=(-.04)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & (parameters$est<=(-.06)|parameters$est>=(-.04)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(.03)|parameters$est>=(.09)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(.03)|parameters$est>=(.09)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:* 
+
+- The exclusion of **MZ53** decreases the effect of **smoke** and makes the estimated parameter more consistent. None of the other parameters show to be substantially affected by the removal of this participant.
+
+- We do not observe other potentially influential cases.
+
+<br>
+
+*Conclusions:*
+
+We decide to perform the analyses on SE without **EM07** and **MZ53**.
+
+<br>
+
+## SOL
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+# taking only ID and variables of interest (only continuous), specifying the model
+data2check <- sleep.long[!is.na(sleep.long$SOL)&!is.na(sleep.long$week.time)&!is.na(sleep.long$SEX)&
+                           !is.na(sleep.long$MEQ.r)&!is.na(sleep.long$PSQI)&!is.na(sleep.long$BDI.II)&
+                           !is.na(sleep.long$ALCOL_week)&!is.na(sleep.long$FUMO..SI.NO.)&
+                           !is.na(sleep.long$CAFFE_week),
+                         c("ID","day","SOL","week.time","SEX","MEQ.r","PSQI","BDI.II","NAP",
+                            "ALCOL_week","FUMO..SI.NO.","CAFFE_week")]
+m <- lmer(log(SOL+.05)~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),sleep.long)
+
+# computing Cook's dinstance and cutoff
+cd <- cooks.distance(m)
+data2check$cd <- cd
+cutoff <- 4/length(levels(data2check$ID)) # 4/N
+
+# selecting influential cases
+index <- c(1:nrow(data2check)) # nrow
+pm=cbind(data2check,cd,index)
+pm=pm[order(pm$cd,decreasing = TRUE),] # order
+pm$infl <- NA
+for(i in 1:nrow(pm)){
+  if(pm[i,"cd"] >= cutoff){ pm[i,"infl"] <- 1 } else { pm[i,"infl"] <- 0 }
+}
+PM <- pm
+
+# Plotting mahalanobis distance
+par(mfrow=c(1,1),mar=c(6, 5, 4, 2) + 0.1)
+plot(cd, xlab="Index",ylab="Cook's distance",
+     main=paste("Cook's Distance \ncut-off: 4/N =",round(cutoff,3),
+                " ( NInfl =",nrow(pm[pm$infl==1,]),")"),
+     pch=20,cex.lab=1.6,cex.axis=1.4,col.main="blue")
+points(pm[pm$cd>=cutoff,"index"],
+       pm[pm$cd>=cutoff,"cd"],pch=20,cex=1.3,col="red")
+text(pm[pm$cd>=cutoff,"index"]-10,
+     pm[pm$cd>=cutoff,"cd"]-0.005,
+     paste(pm[pm$cd>=cutoff,"ID"],pm[pm$cd>=cutoff,"day"]),cex=.8)
+abline(h=cutoff,
+       lwd=1.8,col="blue",lty=2)
+
+# participants showing cases above the cutoff
+levels(as.factor(as.character(pm[pm$cd>cutoff,"ID"])))
+
+```
+
+<br>
+
+*Comments:*
+
+- 38 observations (i.e., combination of participant and day) due to 30 participants are more extreme than others and show a CD above the cutoff
+
+<br>
+
+In the next step, we re-estimate the parameters by excluding each potentially influential participant, one-by-one. We focus on substantial changes in the estimated parameters, such that the excluded cases implies a drastic change in the interpretation of the effects.
+
+```{r  warning=FALSE,message=FALSE}
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(data2check[data2check$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- data2check[data2check$ID!=ID,]
+  m4 <- lmer(log(SOL+.05)~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+# week.time (the code for the remaining parameters is not showed)
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & parameters$est<=(-.1),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & parameters$est<=(-.1),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+```{r  echo=FALSE, warning=FALSE,message=FALSE}
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & (parameters$est<=.57|parameters$est>=.66),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & (parameters$est<=.57|parameters$est>=.66),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & parameters$est>=-.01,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & parameters$est>=-.01,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & (parameters$est<=.034|parameters$est>=.038),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & (parameters$est<=.034|parameters$est>=.038),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(-.1075)|parameters$est>=(-.08)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(-.1075)|parameters$est>=(-.08)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est>=(-.09),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est>=(-.09),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est>=.035,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est>=.035,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- None of the estimated parameters seems to be substantially affected by potentially influential cases.
+
+- Two participants show stronger influence on several parameters: **MZ15** for sex, MEQ-r, PSQI, and BDI; **MZ23** for alcohol and coffee. However, also these participants do not change the interpretation of the results (i.e., non-significant effects remain non-significant, positive effects remain positive and negative effects remain negative).
+
+<br>
+
+*Conclusions:*
+
+We decide to keep all participants in SOL analyses.
+
+<br>
+
+## WASO
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+# taking only ID and variables of interest (only continuous), specifying the model
+data2check <- sleep.long[!is.na(sleep.long$WASO)&!is.na(sleep.long$week.time)&!is.na(sleep.long$SEX)&
+                           !is.na(sleep.long$MEQ.r)&!is.na(sleep.long$PSQI)&!is.na(sleep.long$BDI.II)&
+                           !is.na(sleep.long$ALCOL_week)&!is.na(sleep.long$FUMO..SI.NO.)&
+                           !is.na(sleep.long$CAFFE_week),
+                         c("ID","day","WASO","week.time","SEX","MEQ.r","PSQI","BDI.II","NAP",
+                            "ALCOL_week","FUMO..SI.NO.","CAFFE_week")]
+m <- lmer(WASO~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data2check)
+
+# computing Cook's dinstance and cutoff
+cd <- cooks.distance(m)
+data2check$cd <- cd
+cutoff <- 4/length(levels(data2check$ID)) # 4/N
+
+# selecting influential cases
+index <- c(1:nrow(data2check)) # nrow
+pm=cbind(data2check,cd,index)
+pm=pm[order(pm$cd,decreasing = TRUE),] # order
+pm$infl <- NA
+for(i in 1:nrow(pm)){
+  if(pm[i,"cd"] >= cutoff){ pm[i,"infl"] <- 1 } else { pm[i,"infl"] <- 0 }
+}
+PM <- pm
+
+# Plotting mahalanobis distance
+par(mfrow=c(1,1),mar=c(6, 5, 4, 2) + 0.1)
+plot(cd, xlab="Index",ylab="Cook's distance",
+     main=paste("Cook's Distance \ncut-off: 4/N =",round(cutoff,3),
+                " ( NInfl =",nrow(pm[pm$infl==1,]),")"),
+     pch=20,cex.lab=1.6,cex.axis=1.4,col.main="blue")
+points(pm[pm$cd>=cutoff,"index"],
+       pm[pm$cd>=cutoff,"cd"],pch=20,cex=1.3,col="red")
+text(pm[pm$cd>=cutoff,"index"]-10,
+     pm[pm$cd>=cutoff,"cd"]-0.005,
+     paste(pm[pm$cd>=cutoff,"ID"],pm[pm$cd>=cutoff,"day"]),cex=.8)
+abline(h=cutoff,
+       lwd=1.8,col="blue",lty=2)
+
+# participants showing cases above the cutoff
+levels(as.factor(as.character(pm[pm$cd>cutoff,"ID"])))
+
+```
+
+<br>
+
+*Comments:*
+
+- 44 observations (i.e., combination of participant and day) due to 26 participants are more extreme than others and show a CD above the cutoff
+
+<br>
+
+In the next step, we re-estimate the parameters by excluding each potentially influential participant, one-by-one. We focus on substantial changes in the estimated parameters, such that the excluded cases implies a drastic change in the interpretation of the effects.
+
+```{r  warning=FALSE,message=FALSE}
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(PM[PM$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- PM[PM$ID!=ID,]
+  m4 <- lmer(WASO~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+# week.time (the code for the remaining parameters is not showed)
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & parameters$est>=1.5,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & parameters$est>=1.5,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est<=3,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est<=3,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & parameters$est<=.6,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & parameters$est<=.6,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & (parameters$est<=(-.1)|parameters$est>=.2),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & (parameters$est<=(-.1)|parameters$est>=.2),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & parameters$est>=(-.1),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & parameters$est>=(-.1),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(-1)|parameters$est>=(-.6)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(-1)|parameters$est>=(-.6)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est<=8,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est<=8,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & (parameters$est<=.25|parameters$est>=.45),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & (parameters$est<=.25|parameters$est>=.45),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- Larger differences are shown by the parameter estimated for **smoke** (ranging from 7 to 13, with t-values ranging from 1.4 to 2.2), whose effect is strongly influenced by **MZ53** (leading to an increase of 4 in the estimated smoke coefficient).
+
+- **MZ53** is the participant influencing more coefficients (week.time, sex, MEQ-r, PSQI, alcohol, and smoke), followed by **EM54** (affecting the parameter for alcohol), **MZ16** (influencing the effect of coffee) and **MZ25** (influencing the effect of BDI-II). **MZ53** is the most influential case (this participant is also one of the outliers for SE).
+
+<br>
+
+Thus, we replicate the influential analysis by removing **MZ53**.
+
+```{r  warning=FALSE,message=FALSE}
+
+OUT <- data2check[data2check$ID!="MZ53",] # excluding influential case
+m <- lmer(WASO~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),OUT)
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(OUT[OUT$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- OUT[OUT$ID!=ID,]
+  m4 <- lmer(WASO~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+```
+
+<br>
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+
+# week.time
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & parameters$est>=2.4,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="week.timewe" & parameters$est>=2.4,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est<=1,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est<=1,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & parameters$est>=.6,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & parameters$est>=.6,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & parameters$est<=.1,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & parameters$est<=.1,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & parameters$est>=(-.1),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & parameters$est>=(-.1),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(-.7)|parameters$est>=(-.3)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & (parameters$est<=(-.7)|parameters$est>=(-.3)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est<=5.5,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est<=5.5,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & (parameters$est<=.25|parameters$est>=.4),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & (parameters$est<=.25|parameters$est>=.4),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:* 
+
+- The exclusion of **MZ53** decreases and makes more consistent the parameter estimated for **smoke**. Slight changes are observable also for other parameters.
+
+- There are still some participants showing a degree of influence on the estimation of the parameters, especially **MZ25** (affecting sex and PSQI), **MZ25** (affecting PSQI, BDI-II, and smoke), and **MZ36** (affecting sex, alcohol, and smoke). However, the exclusion of these participant does not substantially change the estimated parameters.
+
+<br>
+
+*Conclusions:*
+
+We decide to exclude only **MZ53* from WASo analyses.
+
+<br>
+
+## BT
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+# taking only ID and variables of interest (only continuous), specifying the model
+data2check <- sleep.long[!is.na(sleep.long$BT)&!is.na(sleep.long$week.time)&!is.na(sleep.long$SEX)&
+                           !is.na(sleep.long$MEQ.r)&!is.na(sleep.long$PSQI)&!is.na(sleep.long$BDI.II)&
+                           !is.na(sleep.long$ALCOL_week)&!is.na(sleep.long$FUMO..SI.NO.)&
+                           !is.na(sleep.long$CAFFE_week),
+                         c("ID","day","BT","week.time","SEX","MEQ.r","PSQI","BDI.II","NAP",
+                            "ALCOL_week","FUMO..SI.NO.","CAFFE_week")]
+m <- lmer(BT~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data2check)
+
+# computing Cook's dinstance and cutoff
+cd <- cooks.distance(m)
+data2check$cd <- cd
+cutoff <- 4/length(levels(data2check$ID)) # 4/N
+
+# selecting influential cases
+index <- c(1:nrow(data2check)) # nrow
+pm=cbind(data2check,cd,index)
+pm=pm[order(pm$cd,decreasing = TRUE),] # order
+pm$infl <- NA
+for(i in 1:nrow(pm)){
+  if(pm[i,"cd"] >= cutoff){ pm[i,"infl"] <- 1 } else { pm[i,"infl"] <- 0 }
+}
+PM <- pm
+
+# Plotting mahalanobis distance
+par(mfrow=c(1,1),mar=c(6, 5, 4, 2) + 0.1)
+plot(cd, xlab="Index",ylab="Cook's distance",
+     main=paste("Cook's Distance \ncut-off: 4/N =",round(cutoff,3),
+                " ( NInfl =",nrow(pm[pm$infl==1,]),")"),
+     pch=20,cex.lab=1.6,cex.axis=1.4,col.main="blue")
+points(pm[pm$cd>=cutoff,"index"],
+       pm[pm$cd>=cutoff,"cd"],pch=20,cex=1.3,col="red")
+text(pm[pm$cd>=cutoff,"index"]-10,
+     pm[pm$cd>=cutoff,"cd"]-0.005,
+     paste(pm[pm$cd>=cutoff,"ID"],pm[pm$cd>=cutoff,"day"]),cex=.8)
+abline(h=cutoff,
+       lwd=1.8,col="blue",lty=2)
+
+# participants showing cases above the cutoff
+levels(as.factor(as.character(pm[pm$cd>cutoff,"ID"])))
+
+```
+
+<br>
+
+*Comments:*
+
+- 28 observations (i.e., combination of participant and day) due to 22 participants are more extreme than others and show a CD above the cutoff
+
+<br>
+
+In the next step, we re-estimate the parameters by excluding each potentially influential participant, one-by-one. We focus on substantial changes in the estimated parameters, such that the excluded cases implies a drastic change in the interpretation of the effects.
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(data2check[data2check$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- PM[PM$ID!=ID,]
+  m4 <- lmer(BT~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+# week.time (the code for the remaining parameters is not showed)
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+```{r echo=FALSE,arning=FALSE,message=FALSE}
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est<=.1,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est<=.1,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & (parameters$est<=(-.15)|parameters$est>=(-.13)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & (parameters$est<=(-.15)|parameters$est>=(-.13)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & parameters$est<=(-.01),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & parameters$est<=(-.01),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=.05,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=.05,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est<=.35,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est<=.35,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est>=.009,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est>=.009,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- Two participants show stronger influence on several parameters: **EM36** for week.time, sex, MEQ-r, PSQI, and smoke; **MZ22** for EQr, alcohol and coffee. Alcohol is the mostly influenced parameter, whose magitude is decreased .072 (t = 1.89) to .047 (t = 1.22).
+
+- However, the exclusion of these participants does not change the interpretation of the results (i.e., non-significant effects remain non-significant, positive effects remain positive and negative effects remain negative).
+
+<br>
+
+*Conclusions:*
+
+We decide to keep all participants in BT data analysis.
+
+<br>
+
+## WT
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+# taking only ID and variables of interest (only continuous), specifying the model
+data2check <- sleep.long[!is.na(sleep.long$WT.dayAfter)&!is.na(sleep.long$week.time)&!is.na(sleep.long$SEX)&
+                           !is.na(sleep.long$MEQ.r)&!is.na(sleep.long$PSQI)&!is.na(sleep.long$BDI.II)&
+                           !is.na(sleep.long$ALCOL_week)&!is.na(sleep.long$FUMO..SI.NO.)&
+                           !is.na(sleep.long$CAFFE_week),
+                         c("ID","day","WT.dayAfter","week.time","SEX","MEQ.r","PSQI","BDI.II","NAP",
+                            "ALCOL_week","FUMO..SI.NO.","CAFFE_week")]
+m <- lmer(WT.dayAfter~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data2check)
+
+# computing Cook's dinstance and cutoff
+cd <- cooks.distance(m)
+data2check$cd <- cd
+cutoff <- 4/length(levels(data2check$ID)) # 4/N
+
+# selecting influential cases
+index <- c(1:nrow(data2check)) # nrow
+pm=cbind(data2check,cd,index)
+pm=pm[order(pm$cd,decreasing = TRUE),] # order
+pm$infl <- NA
+for(i in 1:nrow(pm)){
+  if(pm[i,"cd"] >= cutoff){ pm[i,"infl"] <- 1 } else { pm[i,"infl"] <- 0 }
+}
+PM <- pm
+
+# Plotting mahalanobis distance
+par(mfrow=c(1,1),mar=c(6, 5, 4, 2) + 0.1)
+plot(cd, xlab="Index",ylab="Cook's distance",
+     main=paste("Cook's Distance \ncut-off: 4/N =",round(cutoff,3),
+                " ( NInfl =",nrow(pm[pm$infl==1,]),")"),
+     pch=20,cex.lab=1.6,cex.axis=1.4,col.main="blue")
+points(pm[pm$cd>=cutoff,"index"],
+       pm[pm$cd>=cutoff,"cd"],pch=20,cex=1.3,col="red")
+text(pm[pm$cd>=cutoff,"index"]-10,
+     pm[pm$cd>=cutoff,"cd"]-0.005,
+     paste(pm[pm$cd>=cutoff,"ID"],pm[pm$cd>=cutoff,"day"]),cex=.8)
+abline(h=cutoff,
+       lwd=1.8,col="blue",lty=2)
+
+# participants showing cases above the cutoff
+levels(as.factor(as.character(pm[pm$cd>cutoff,"ID"])))
+
+```
+
+<br>
+
+*Comments:*
+
+- 32 observations (i.e., combination of participant and day) due to 22 participants are more extreme than others and show a CD above the cutoff
+
+<br>
+
+In the next step, we re-estimate the parameters by excluding each potentially influential participant, one-by-one. We focus on substantial changes in the estimated parameters, such that the excluded cases implies a drastic change in the interpretation of the effects.
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+# parameters with all participants
+parameters <- as.data.frame(round(summary(m)$coefficients,3))
+parameters$ID <- "All"
+IDs <- levels(as.factor(as.character(data2check[data2check$cd>cutoff,"ID"]))) # ID-day couples with CD > cutoff
+for(ID in IDs){
+  new.data <- PM[PM$ID!=ID,]
+  m4 <- lmer(WT.dayAfter~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),new.data)
+  new.data <- as.data.frame(round(summary(m4)$coefficients,3))
+  new.data$ID <- ID
+  parameters <- rbind(parameters,new.data)
+}
+parameters <- cbind(parameters,rep(c("Intercept","week.timewe","SEXM","MEQ.r","PSQI","BDI.II","NAP",
+                                     "ALCOL_week","FUMO..SI.NO.1","CAFFE_week"),
+                                   length(IDs)+1))
+colnames(parameters) <- c("est","st.err","t","ID","pred")
+parameters
+
+# week.time (the code for the remaining parameters is not showed)
+p1 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,est))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="week.timewe",],aes(ID,t))+
+  geom_point()+ggtitle("week.time effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="week.timewe"&parameters$ID=="All",],colour="red")+
+  theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+
+# SEX
+p1 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,est))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est<=(-.225),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="SEXM",],aes(ID,t))+
+  geom_point()+ggtitle("SEX effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="SEXM"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="SEXM" & parameters$est<=(-.225),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# MEQ.r
+p1 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,est))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & (parameters$est<=(-.15)|parameters$est>=(-.13)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="MEQ.r",],aes(ID,t))+
+  geom_point()+ggtitle("MEQ-r effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="MEQ.r"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="MEQ.r" & (parameters$est<=(-.15)|parameters$est>=(-.13)),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# PSQI
+p1 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,est))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="PSQI",],aes(ID,t))+
+  geom_point()+ggtitle("PSQI effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="PSQI"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="PSQI" & parameters$est<=(-.02),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# BDI-II
+p1 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,est))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & parameters$est<=(-.01),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="BDI.II",],aes(ID,t))+
+  geom_point()+ggtitle("BDI-II effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="BDI.II"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="BDI.II" & parameters$est<=(-.01),],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# NAP
+p1 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,est))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+p2 <- ggplot(parameters[parameters$pred=="NAP",],aes(ID,t))+
+  geom_point()+ggtitle("NAP effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="NAP"&parameters$ID=="All",],colour="red")
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# ALCOL
+p1 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,est))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=.05,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="ALCOL_week",],aes(ID,t))+
+  geom_point()+ggtitle("ALCOHOL effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="ALCOL_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="ALCOL_week" & parameters$est<=.05,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# SMOKE
+p1 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,est))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est<=.35,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="FUMO..SI.NO.1",],aes(ID,t))+
+  geom_point()+ggtitle("SMOKE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="FUMO..SI.NO.1"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="FUMO..SI.NO.1" & parameters$est<=.35,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+# COFFEE
+p1 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,est))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est>=.004,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+p2 <- ggplot(parameters[parameters$pred=="CAFFE_week",],aes(ID,t))+
+  geom_point()+ggtitle("COFFE effect - original (red) vs. removing cases")+xlab("")+
+  geom_point(data=parameters[parameters$pred=="CAFFE_week"&parameters$ID=="All",],colour="red")+
+  geom_text(data=parameters[parameters$pred=="CAFFE_week" & parameters$est>=.004,],
+            aes(label=ID),nudge_x=-1) + theme(axis.text.x = element_blank())
+gridExtra::grid.arrange(p1,p2,nrow=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- None of the estimated parameters seems to be substantially affected by potentially influential cases.
+
+- **MZ22** is the participant influencing more parameters, and particoularly MEQ-r, alcohol, smoke, and coffee comsumption.
+However, the exclusion of these participants does not change the interpretation of the results (i.e., non-significant effects remain non-significant, positive effects remain positive and negative effects remain negative). The strongest influence of this participant is on **alcohol assumption**, whose estimated parameter changes from .05 (t = 1.82) to .03 (t = 1.08) after the removal of MZ22.
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+infl <- influence.ME::influence(m,"ID")
+cd <- influence.ME::cooks.distance.estex(infl, parameter=8, sort=TRUE)[,1]
+cd[which(names(cd)=="MZ22")]
+4/nlevels(data2check$ID) # cutoff
+
+```
+
+<br>
+
+*Conclusions:*
+
+We decide to keep all participants in WT data analysis.
+
+<br>
+
+# 7. LMER Models {.tabset .tabset-fade .tabset-pills}
+
+In this section, we use the information from previous sections to specify a set of **LMER models** for each sleep metric of interest. As mentioned above, we proceed with a **hierarchical regression** by including the predictors of interest one-by-one, and we perform a **model comparison** starting from a null model (with no predictors) until the model including all predictors. Each model is compared to the previous one using the likelihood ratio test (LRT) and the Aikake Information Criterion (AIC).
+
+```{r  warning=FALSE,message=FALSE}
+
+library(lme4); library(effects); library(MuMIn); library(arm) # modeling
+library(gridExtra); library(jtools); library(knitr); library(sjPlot) # outputs
+options(knitr.kable.NA = '')
+
+```
+
+<br>
+
+## PIPELINE
+
+<br>
+
+For each sleep measure:
+
+- We specify the models including the predictors in the order mentioned above (see Aims and Content). 
+
+- The set of models is compared using the LRT and the AIC. The AIC weight (AICw) is used to express AIC in a probabilistic way (i.e., each model is associated with a probability, from 0 to 1, to be the most plausible model).
+
+- The parameters estimated by the selected model are reported with their 95% confidence intervals (CI) obtained using bootstrap with the percentile method (with 10,000 replicates), their standard error (SE), and t-value. 
+
+<br>
+
+The function **modelComp** is used to optimize the process and generate the output.
+
+<details><summary>Show function</summary>
+<p>
+```{r echo=TRUE}
+
+modComp <- function(data=sleep.long,measure="TIB",influentials=c("MZ56","EM42"),
+                    CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2){
+  
+  require(lme4); require(MuMIn)
+  
+  # excluding influential cases
+  df <- data
+  for(i in 1:length(influentials)){ df <- df[df$ID!=influentials[i],] }
+  
+  # model specification
+  models <- list(lmer(formula=gsub("TIB",measure,
+                                   "TIB~(1|ID)"), df), # null model
+                 lmer(formula=gsub("TIB",measure,
+                                   "TIB~week.time+(1|ID)"),df), # week time
+                 lmer(formula=gsub("TIB",measure,
+                                   "TIB~week.time+SEX+(1|ID)"), df), # SEX
+                 lmer(formula=gsub("TIB",measure,
+                                   "TIB~week.time+SEX+MEQ.r+(1|ID)"), df), # MEQ.r
+                 lmer(formula=gsub("TIB",measure,
+                                   "TIB~week.time+SEX+MEQ.r+PSQI+(1|ID)"), df), # PSQI
+                 lmer(formula=gsub("TIB",measure,
+                                   "TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+(1|ID)"), df), # BDI
+                 lmer(formula=gsub("TIB",measure,
+                                   "TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+(1|ID)"), df), # NAP
+                 lmer(formula=gsub("TIB",measure,
+                                   "TIB~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID)"), df)) # sub
+  
+  # likelihood ratio test
+  lrt <- as.data.frame(anova(models[[1]],models[[2]],models[[3]],models[[4]],models[[5]],
+                             models[[6]],models[[7]],models[[8]]))
+  mc <- cbind(model=c("null","week.time","SEX","MEQ.r","PSQI","BDI.II","NAP","sub"),
+              round(lrt[,c(1,2,5:7)],digits),p=round(lrt$`Pr(>Chisq)`,digits+1))
+  
+  # AIC weight
+  mc$AICw <- round(Weights(mc$AIC),digits)
+  
+  # model selection (based on LRT and AIC)
+  bestMod <- mc[which(mc$AICw==max(mc$AICw)),"model"]
+  cat("selected model:",as.character(bestMod),"\n\n")
+  print(summary(models[[which(mc$model==bestMod)]]))
+  
+  # selected model's parameters
+  coeff <- round(summary(models[[which(mc$model==bestMod)]])$coefficients,digits)
+  
+  # boostrap CI
+  coeff <- cbind(coeff,round(confint.merMod(models[[which(mc$model==bestMod)]],
+                                            parm=3:(length(fixef(models[[which(mc$model==bestMod)]]))+2),
+                                            level=CI.level,method=CI.method,boot.type=boot.type,nsim=nsim),digits))
+  
+   # joining model comparison and coefficients info
+  if(nrow(coeff) < nrow(mc)){
+    empty.row <- rep("",nrow(mc)-nrow(coeff))
+    out <- cbind(mc[,c("model","Chisq","Chi Df","p","AICw")],
+                 rbind(coeff[,c(1:2,4:5,3)],
+                       cbind(Estimate=empty.row,'Std. Error'=empty.row,
+                             '2.5 %'=empty.row,'97.5 %'=empty.row,'t value'=empty.row)))
+    } else if(nrow(coeff) > nrow(mc)){
+      empty.row <- rep("",nrow(coeff)-nrow(mc))
+      out <- cbind(rbind(mc[,c("model","Chisq","Chi Df","p","AICw")],
+                         cbind(model=empty.row,Chisq=empty.row,'Chi Df'=empty.row,
+                               p=empty.row,AICw=empty.row)),
+                   coeff[,c(1:2,4:5,3)]) }
+  rownames(out) <- 1:nrow(out)
+  out[,c("Estimate","Std. Error","2.5 %","97.5 %","t value")] <- lapply(out[,c("Estimate","Std. Error","2.5 %","97.5 %","t value")],
+                                                                        as.character)
+  out[,c("Estimate","Std. Error","2.5 %","97.5 %","t value")] <- lapply(out[,c("Estimate","Std. Error","2.5 %","97.5 %","t value")],
+                                                                        as.numeric)
+  
+  return(out)
+}
+
+```
+
+</p>
+</details>
+
+<br>
+
+## TIB
+
+<br>
+
+TIB is modeled assuming a normal distribution for residuals and excluding participant **MZ56** and **EM42** (see previous sections).
+
+```{r  warning=FALSE,message=FALSE}
+
+(TIB <- modComp(data=sleep.long,measure="TIB",influentials=c("MZ56","EM42"),
+                CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2))
+
+```
+
+<br>
+
+*Comments:*
+
+- The model including the effect of both **Week time** and **Gender** is the only one showing a significantly higher logLikelihood compared to the null model for TIB.
+
+- The model including **Week time** and **Gender** is also the model with the lowest AIC, followed by the model including MEQ.r (AICw = .21).
+
+- TIB is only predicted by participants’ **Gender** (with males showing shorter sleep time compared to females).
+
+<br>
+
+Below, the effects are plotted and a summary table is generated.
+
+```{r  warning=FALSE,message=FALSE}
+
+# effect plot
+plot(effects::allEffects(lmer(TIB~week.time+SEX+(1|ID),sleep.long)))
+
+```
+
+<br>
+
+Let's see what the results would have been if **MZ56** and **EM42** were not excluded.
+
+```{r  warning=FALSE,message=FALSE}
+
+modComp(data=sleep.long,measure="TIB",influentials="none",
+        CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- Including **MZ56** and **EM42** would have led to an higher parameter estimated for Week Time, with higher TIB during weekend compared to weekdays (coeff. = .24, SE = .12, t = 1.99), while mantaining the effect of Gender.
+
+- Also in this case, the model with both Week time and Gender would have been selected based on AIC.
+
+<br>
+
+*Conclusions:*
+
+TIB is significantly predicted only by participants' gender, with shorter TIB in males compared to females. The effect of Week time was less evident and due to participant EM42.
+
+<br>
+
+## TST
+
+<br>
+
+TST is modeled assuming a normal distribution for residuals and including all participants (see previous sections).
+
+```{r  warning=FALSE,message=FALSE}
+
+(TST <- modComp(data=sleep.long,measure="TST",influentials="none",
+                CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2))
+
+```
+
+<br>
+
+*Comments:*
+
+- The model including the effect of **week.time**, and that including also **sex** are the only models associated to a significantly higher logLikelihood compared to the null model for TST.
+
+- The model including only **sex and week.time** is also the model with the lowest AIC, follo. The dAIC suggests that the former is about 2.5 times more plausible than the latter.
+
+- TST is predicted by participants' **sex** (with males showing shorter sleep duration), and by **week time** (with weekend being associated to longer sleep duration than weekdays).
+
+<br>
+
+Below, the effects are plotted.
+
+```{r  warning=FALSE,message=FALSE}
+
+# effect plot
+plot(effects::allEffects(lmer(TST~week.time+SEX+(1|ID),sleep.long)))
+
+```
+
+<br>
+
+*Conclusions:*
+
+Total sleep time is only predicted by participants' gender (with males showing a shorter duration than females) and week time (with longer TST during weekend compared to week days).
+
+<br>
+
+## SE
+
+<br>
+
+SE is modeled assuming a normal distribution for residuals and excluding participant **EM07** and **MZ53** (see previous sections).
+
+```{r  warning=FALSE,message=FALSE}
+
+(SE <- modComp(data=sleep.long,measure="SE",influentials=c("EM07","MZ53"),
+               CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2))
+
+```
+
+<br>
+
+*Comments:*
+
+- None of the specified models shows a significantly higher logLikelihood than the null model.
+
+- Consistently, the null model shows the lowest AIC  (AICw = .37), with model 1 (including only week.time) showing the second lowest AIC (AICw = .25).
+
+Let's see what the results would have been if **EM07** and **MZ53** were not excluded.
+
+```{r  warning=FALSE,message=FALSE}
+
+(SE <- modComp(data=sleep.long,measure="SE",influentials="none",
+               CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2))
+
+summary(lmer(SE~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data=sleep.long))
+
+```
+
+<br>
+
+*Comments:*
+
+- Including **EM07** and **MZ53** would have led the LRT to indicate the most complex model as the best one.
+
+- In contrast, the null model is still the model with the highest AICw.
+
+- The most complex model shows an effect of NAP and Smoke, with lower SE on days with NAP compared to days without NAP (coef. = -.91, SE = .45, t = -2.01) and on smokers compared to non-smokers (coef. = -2.61, SE = 1.18, t = -2.10).
+
+<br>
+
+*Conclusions:*
+
+None of the included predictors exerted a significant effect on SE. The effect of NAP was due to participant **EM07**, and the effect of Smoke was due to participant **MZ53**.
+
+<br>
+
+## SOL
+
+<br>
+
+SOL is log-transformed and modeled assuming a normal distribution for residuals. All participants are included in the analysis (see previous sections).
+
+```{r  warning=FALSE,message=FALSE}
+
+(SOL <- modComp(data=sleep.long,measure="log(SOL+.05)",influentials="none",
+                CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2))
+
+```
+
+<br>
+
+*Comments:*
+
+- The model including the effect of **BDI-II** and the most complex model (with **substances**) are the only models associated with a significantly higher logLikelihood compared to the null model for SE.
+
+- Coherently, the last model shows the lowest AIC (AICw = .44), with the model with **BDI-II** showing the second lowest AIC (AICw = .17).
+
+- SOL is mainly predicted by participants' **sex** (with longer SOL for males), **BDI-II** score, and the weekly amount of consumed **alcohol** and **coffee**.
+
+<br>
+
+Below, the effects are plotted.
+
+```{r  warning=FALSE,message=FALSE}
+
+# effect plots
+plot(effects::allEffects(lmer(log(SOL + 0.05) ~ week.time + SEX + MEQ.r + PSQI + BDI.II + NAP +  
+                                ALCOL_week + FUMO..SI.NO. + CAFFE_week + (1 | ID),sleep.long))[c(2,5,7,9)])
+
+```
+
+<br>
+
+*Conclusions:*
+
+The model comparison suggested a positive relationship between SOL and depressive symptoms, a negative relationship between SOL and the weekly amount of alcoholic units, a positive relationship between SOL and the weekly amount of coffees, and a higher SOL among smokers compared to non-smokers. Moreover, males showed shorted SOL than females.
+
+<br>
+
+## WASO
+
+<br>
+
+WASO is modeled assuming a normal distribution for residuals and by excluding participant MZ53 (see previous sections).
+
+<br>
+
+```{r  warning=FALSE,message=FALSE}
+
+(WASO <- modComp(data=sleep.long,measure="WASO",influentials="MZ53",
+                 CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2))
+
+```
+
+<br>
+
+*Comments:*
+
+- None of the specified models shows a significantly higher logLikelihood than the null model.
+
+- Consistently, the null model shows the lowest AIC  (AICw = .46), with model 1 (including only week.time) showing the second lowest AIC (AICw = .32).
+
+<br>
+
+Let's see what would have been the results if **MZ53** was not excluded.
+
+```{r  warning=FALSE,message=FALSE}
+
+modComp(data=sleep.long,measure="WASO",influentials="none",
+        CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2)
+
+```
+
+<br>
+
+*Comments:*
+
+- although in section 6 we observed and increased effect of Smoke due to participant **MZ53**, the inclusion of this participant does not change the results of the model comparison.
+
+<br>
+
+*Conclusions:*
+
+None of the included predictors exerted a significant effect on WASO. The effect of Smoke was not substantial, and mainly due to participant **MZ53**.
+
+<br>
+
+## BT
+
+<br>
+
+BT is modeled assuming a normal distribution for residuals and including all participants (see previous sections).
+
+```{r  warning=FALSE,message=FALSE}
+
+(BT <- modComp(data=sleep.long,measure="BT",influentials="none",
+               CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2))
+
+# summary of the most complex model
+summary(lmer(BT~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data=sleep.long))
+
+```
+
+<br>
+
+*Comments:*
+
+- The model including the effect of **week.time** shows a significantly higher logLikelihood compared to the null model for BT. Moreover, the LRT suggests a significant contribution of **MEQ-r** score over week time and sex, and a significant contribution of the inclusion of **substances** over the other predictors.
+
+- In contrast, the model with **MEQ-r** is selected as the most plausible model based on the AIC (AICw = .44), with the most complex model showing the second best AIC (AICw = .31).
+
+- In the selected model, BT is predicted by the **week time**, with weekend days showing later BT compared to week days. Moreover, BT was predicted by the **MEQ-r** score, with earlier BT being predicted by higher scores (i.e., indicating morning circadian preferences). The effect of sex is not substantial.
+
+- The most complex model (selected based on the LRT but not the AIC), does not show any substantial effect of substances.
+
+<br>
+
+Below, the effects are plotted.
+
+```{r  warning=FALSE,message=FALSE}
+
+plot(effects::allEffects(lmer(BT ~ week.time + SEX + MEQ.r + (1|ID),sleep.long))[c(1,3)])
+
+```
+
+<br>
+
+*Conclusions:*
+
+The model's comparison suggested a negative relationship between BT and the score on the MEQ-r, and later BT during the weekend compared to weekdays.
+
+<br>
+
+## WT
+
+<br>
+
+WT is modeled assuming a normal distribution for residuals and including all participants (see previous sections). Note that for testing the effects of week.time on this variable, we should use **WT.dayAfter**, which is referred to the subsequent day (e.g., WT on day 7 is Monday WT). In this way, Monday to Friday are considered weekdays, whereas Saturday and Sunday are considered weekend days.
+
+```{r  warning=FALSE,message=FALSE}
+
+(WT <- modComp(data=sleep.long,measure="WT.dayAfter",influentials="none",
+               CI.method="boot",boot.type="perc",CI.level=.95,nsim=10000,digits=2))
+
+# summary of the most complex model
+summary(lmer(WT~week.time+SEX+MEQ.r+PSQI+BDI.II+NAP+ALCOL_week+FUMO..SI.NO.+CAFFE_week+(1|ID),data=sleep.long))
+
+```
+
+<br>
+
+*Comments:*
+
+- The model including the effect of **week.time** shows a significantly higher logLikelihood compared to the null model for BT. Moreover, the LRT suggests a significant contribution of the **MEQ-r** score over week time and sex, and a significant contribution of **substances**' effect over the other predictors.
+
+- In contrast, the model with **MEQ-r** is selected as the most plausible model based on the AIC (AICw = .40), with the most complex model showing the second best AIC (AICw = .35).
+
+- In the selected model, WT is predicted by the **week time**, with weekend days showing later BT compared to week days. Moreover, BT is predicted by the **MEQ-r** score, with earlier BT being predicted by higher scores (i.e., indicating morning circadian preferences).
+
+- The most complex model (selected based on the LRT but not the AIC), does not show any substantial effect of substances.
+
+<br>
+
+Below, the effects are plotted.
+
+```{r  warning=FALSE,message=FALSE}
+
+plot(effects::allEffects(lmer(WT ~ week.time + SEX + MEQ.r + (1|ID),sleep.long))[c(1,3)])
+
+```
+
+*Conclusions:*
+
+The model comparison suggested a negative relationship between WT and the score on the MEQ-r, and later WT during the weekend compared to weekdays.
+
+<br>
+
+## FINAL TABLE
+
+<br>
+
+Here, the outputs of the model comparisons are combined to generate the results table.
+
+<br>
+
+```{r  }
+
+(results <- rbind(TIB,TST,SE,SOL,WASO,BT,WT))
+write.csv(results,"ModelComp.csv")
+
+```
+
+<br>
